@@ -26,32 +26,37 @@
 //
 
 #import "OVInputMethodController.h"
-#import "OVLoaderServiceImpl.h"
-#import "OVCandidateServiceImpl.h"
-#import "OVTextBufferCombinator.h"
-#import "OVToolTipWindowController.h"
-#import "OVModuleManager.h"
-#import "OVUpdateChecker.h"
-#import "OVConstants.h"
-#import "OVAppDelegate.h"
+#import "OpenVanilla-Swift.h"
+
+@import OpenVanilla;
+@import OpenVanillaImpl;
+@import LoaderService;
+@import ModuleManager;
+@import TooltipUI;
+
+using namespace OpenVanilla;
 
 @interface OVInputMethodController ()
+{
+@protected
+    OVTextBufferImpl *_composingText;
+    OVTextBufferImpl *_readingText;
+    OVEventHandlingContext *_inputMethodContext;
+    OVEventHandlingContext *_associatedPhrasesContext;
+    BOOL _associatedPhrasesContextInUse;
+    id _currentClient;
+}
+
 - (BOOL)handleOVKey:(OVKey &)key client:(id)client;
-
 - (void)handleInputMethodChange:(NSNotification *)notification;
-
 - (void)handleCandidateSelected:(NSNotification *)notification;
-
 - (void)updateClientComposingBuffer:(id)sender;
-
 - (void)changeInputMethodAction:(id)sender;
-
 - (void)toggleTraditionalToSimplifiedChineseFilterAction:(id)sender;
-
 - (void)toggleSimplifiedToTraditionalChineseFilterAction:(id)sender;
-
+- (void)toggleFullWidthToHalfWidthFilterAction:(id)sender;
+- (void)toggleHalfWidthToFullWidthFilterAction:(id)sender;
 - (void)openUserGuideAction:(id)sender;
-
 - (void)showAboutAction:(id)sender;
 @end
 
@@ -70,7 +75,7 @@
 {
 }
 
-- (id)initWithServer:(IMKServer *)server delegate:(id)aDelegate client:(id)client
+- (instancetype)initWithServer:(IMKServer *)server delegate:(id)aDelegate client:(id)client
 {
     self = [super initWithServer:server delegate:aDelegate client:client];
     if (self) {
@@ -87,8 +92,13 @@
     NSMenu *menu = [[NSMenu alloc] init];
 
     NSString *activeInputMethodIdentifier = [OVModuleManager defaultManager].activeInputMethodIdentifier;
-    NSArray *inputMethodIdentifiers = [[OVModuleManager defaultManager] inputMethodIdentifiers];
+    NSArray *inputMethodIdentifiers = [OVModuleManager defaultManager].inputMethodIdentifiers;
+    NSArray *excludedIdentifiers = [OVModuleManager defaultManager].excludedIdentifiers;
     for (NSString *identifier in inputMethodIdentifiers) {
+        if ([excludedIdentifiers containsObject: identifier]) {
+            continue;;
+        }
+
         NSMenuItem *item = [[NSMenuItem alloc] init];
         item.title = [[OVModuleManager defaultManager] localizedInputMethodName:identifier];
         item.representedObject = identifier;
@@ -96,7 +106,7 @@
         item.action = @selector(changeInputMethodAction:);
 
         if ([activeInputMethodIdentifier isEqualToString:identifier]) {
-            item.state = NSOnState;
+            item.state = NSControlStateValueOn;
         }
 
         [menu addItem:item];
@@ -105,16 +115,25 @@
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *filterItem;
-    filterItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Convert Traditional Chinese to Simplified", @"") action:@selector(toggleTraditionalToSimplifiedChineseFilterAction:) keyEquivalent:@""];
-    filterItem.state = [OVModuleManager defaultManager].traditionalToSimplifiedChineseFilterEnabled ? NSOnState : NSOffState;
+    filterItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Convert Traditional Chinese to Simplified", @"") action:@selector(toggleTraditionalToSimplifiedChineseFilterAction:) keyEquivalent:@"g"];
+    [filterItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagControl];
+    filterItem.state = [OVModuleManager defaultManager].traditionalToSimplifiedChineseFilterEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [menu addItem:filterItem];
 
     filterItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Convert Simplified Chinese to Traditional", @"") action:@selector(toggleSimplifiedToTraditionalChineseFilterAction:) keyEquivalent:@""];
-    filterItem.state = [OVModuleManager defaultManager].simplifiedToTraditionalChineseFilterEnabled ? NSOnState : NSOffState;
+    filterItem.state = [OVModuleManager defaultManager].simplifiedToTraditionalChineseFilterEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:filterItem];
+
+    filterItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Convert Full-Width Punctuation to Half-Width", @"") action:@selector(toggleFullWidthToHalfWidthFilterAction:) keyEquivalent:@""];
+    filterItem.state = [OVModuleManager defaultManager].fullWidthToHalfWidthFilterEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:filterItem];
+
+    filterItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Convert Half-Width Punctuation to Full-Width", @"") action:@selector(toggleHalfWidthToFullWidthFilterAction:) keyEquivalent:@""];
+    filterItem.state = [OVModuleManager defaultManager].halfWidthToFullWidthFilterEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [menu addItem:filterItem];
 
     filterItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Associated Phrases", @"") action:@selector(toggleAssociatedPhrasesAroundFilterEnabledAction:) keyEquivalent:@""];
-    filterItem.state = [OVModuleManager defaultManager].associatedPhrasesAroundFilterEnabled ? NSOnState : NSOffState;
+    filterItem.state = [OVModuleManager defaultManager].associatedPhrasesAroundFilterEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [menu addItem:filterItem];
 
     [menu addItem:[NSMenuItem separatorItem]];
@@ -137,8 +156,32 @@
 {
     [OVModuleManager defaultManager].candidateService->resetAll();
 
+    NSString *activeInputMethodIdentifier = [OVModuleManager defaultManager].activeInputMethodIdentifier;
+    NSArray *identifiers = [OVModuleManager defaultManager].inputMethodIdentifiers;
+    NSArray *excludedIdentifiers = [OVModuleManager defaultManager].excludedIdentifiers;
+    NSMutableArray *availableInputMethods = [[NSMutableArray alloc] init];
+    for (NSString *identifier in identifiers) {
+        if ([excludedIdentifiers containsObject:identifier]) {
+            continue;;
+        }
+        [availableInputMethods addObject:identifier];
+    }
+    if (!availableInputMethods.count) {
+        NSString *first = identifiers[0];
+        NSMutableArray *excludedIdentifiersCopy = [NSMutableArray arrayWithArray:excludedIdentifiers];
+        [excludedIdentifiersCopy removeObject:first];
+        [OVModuleManager defaultManager].excludedIdentifiers = excludedIdentifiersCopy;
+        [[OVModuleManager defaultManager] selectInputMethod:first];
+    } else if (![availableInputMethods containsObject:activeInputMethodIdentifier]) {
+        NSString *first = identifiers[0];
+        [[OVModuleManager defaultManager] selectInputMethod:first];
+    }
+
     NSString *keyboardLayout = [[OVModuleManager defaultManager] alphanumericKeyboardLayoutForInputMethod:[OVModuleManager defaultManager].activeInputMethodIdentifier];
-    [client overrideKeyboardWithKeyboardNamed:keyboardLayout];
+
+    if ([client respondsToSelector:@selector(overrideKeyboardWithKeyboardNamed:)]) {
+        [client overrideKeyboardWithKeyboardNamed:keyboardLayout];
+    }
 
     [[OVModuleManager defaultManager] synchronizeActiveInputMethodSettings];
 
@@ -157,7 +200,7 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleCandidateSelected:) name:OVOneDimensionalCandidatePanelImplDidSelectCandidateNotification object:nil];
 
     if ([[NSUserDefaults standardUserDefaults] boolForKey:OVCheckForUpdateKey]) {
-        [[OVUpdateChecker sharedInstance] checkForUpdateIfNeeded];
+        [[UpdateChecker sharedInstance] checkForUpdateIfNeeded];
     }
 }
 
@@ -199,47 +242,60 @@
         [super showPreferences:sender];
     }
     else {
-        [(OVAppDelegate *)[NSApp delegate] showPreferences];
+        [(AppDelegate * )NSApp.delegate showPreferences];
     }
     [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
 }
 
 - (void)commitComposition:(id)sender
 {
-    // fix the premature commit bug in Terminal.app since OS X 10.5
-    if ([[sender bundleIdentifier] isEqualToString:@"com.apple.Terminal"] && ![NSStringFromClass([sender class]) isEqualToString:@"IPMDServerClientWrapper"]) {
-        [self performSelector:@selector(updateClientComposingBuffer:) withObject:_currentClient afterDelay:0.0];
-        return;
-    }
-
     if (_composingText->isCommitted()) {
-        NSString *combinedText = [NSString stringWithUTF8String:_composingText->composedCommittedText().c_str()];
+        NSString *combinedText = @(_composingText->composedCommittedText().c_str());
         NSString *filteredText = [[OVModuleManager defaultManager] filteredStringWithString:combinedText];
         [sender insertText:filteredText replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
     }
 }
 
+- (NSUInteger)recognizedEvents:(id)sender
+{
+    return NSEventMaskKeyDown | NSEventMaskFlagsChanged;
+}
+
 - (BOOL)handleEvent:(NSEvent *)event client:(id)client
 {
+    if (event.type == NSEventTypeFlagsChanged) {
+        NSString *sharedKeyboardLayout = [[OVModuleManager defaultManager] sharedAlphanumericKeyboardLayoutIdentifier];
+        NSString *inputMethodKeyboardLayout = [[OVModuleManager defaultManager] alphanumericKeyboardLayoutForInputMethod:[OVModuleManager defaultManager].activeInputMethodIdentifier];
+        if ((event.modifierFlags & NSEventModifierFlagShift) &&
+            [OVModuleManager defaultManager].fallbackToSharedAlphanumericKeyboardLayoutWhenShiftPressed
+            ) {
+            [client overrideKeyboardWithKeyboardNamed:sharedKeyboardLayout];
+            return NO;
+        }
+        [client overrideKeyboardWithKeyboardNamed:inputMethodKeyboardLayout];
+        return NO;
+    }
+
+    if (event.type != NSEventTypeKeyDown) {
+        return NO;
+    }
+
     if (_readingText->toolTipText().length() || _composingText->toolTipText().length()) {
+        NSLog(@"clear tooltip");
         _readingText->clearToolTip();
         _composingText->clearToolTip();
         [[OVModuleManager defaultManager].toolTipWindowController.window orderOut:self];
     }
 
-    if ([event type] != NSKeyDown) {
-        return NO;
-    }
+    NSString *chars = event.characters;
+    NSUInteger cocoaModifiers = event.modifierFlags;
+    unsigned short virtualKeyCode = event.keyCode;
 
-    NSString *chars = [event characters];
-    NSUInteger cocoaModifiers = [event modifierFlags];
-    unsigned short virtualKeyCode = [event keyCode];
-
-    bool capsLock = !!(cocoaModifiers & NSAlphaShiftKeyMask);
-    bool shift = !!(cocoaModifiers & NSShiftKeyMask);
-    bool ctrl = !!(cocoaModifiers & NSControlKeyMask);
-    bool opt = !!(cocoaModifiers & NSAlternateKeyMask);
-    bool cmd = !!(cocoaModifiers & NSCommandKeyMask);
+    bool capsLock = !!(cocoaModifiers & NSEventModifierFlagCapsLock);
+    bool shift = !!(cocoaModifiers & NSEventModifierFlagShift);
+    bool ctrl = !!(cocoaModifiers & NSEventModifierFlagControl);
+    bool opt = !!(cocoaModifiers & NSEventModifierFlagOption);
+    bool cmd = !!(cocoaModifiers & NSEventModifierFlagCommand);
     bool numLock = false;
 
     static UInt32 numKeys[16] = {
@@ -256,27 +312,27 @@
 
     OVKey key;
     UniChar unicharCode = 0;
-    if ([chars length] > 0) {
+    if (chars.length > 0) {
         unicharCode = [chars characterAtIndex:0];
 
         // map Ctrl-[A-Z] to a char code
-        if (cocoaModifiers & NSControlKeyMask) {
+        if (cocoaModifiers & NSEventModifierFlagControl) {
             if (unicharCode < 27) {
                 unicharCode += ('a' - 1);
             }
             else {
                 switch (unicharCode) {
                     case 27:
-                        unicharCode = (cocoaModifiers & NSShiftKeyMask) ? '{' : '[';
+                        unicharCode = (cocoaModifiers & NSEventModifierFlagShift) ? '{' : '[';
                         break;
                     case 28:
-                        unicharCode = (cocoaModifiers & NSShiftKeyMask) ? '|' : '\\';
+                        unicharCode = (cocoaModifiers & NSEventModifierFlagShift) ? '|' : '\\';
                         break;
                     case 29:
-                        unicharCode = (cocoaModifiers & NSShiftKeyMask) ? '}' : ']';
+                        unicharCode = (cocoaModifiers & NSEventModifierFlagShift) ? '}' : ']';
                         break;
                     case 31:
-                        unicharCode = (cocoaModifiers & NSShiftKeyMask) ? '_' : '-';
+                        unicharCode = (cocoaModifiers & NSEventModifierFlagShift) ? '_' : '-';
                         break;
                 }
             }
@@ -352,7 +408,7 @@
         key = [OVModuleManager defaultManager].loaderService->makeOVKey(unicharCode, opt, opt, ctrl, shift, cmd, capsLock, numLock);
     }
     else {
-        key = [OVModuleManager defaultManager].loaderService->makeOVKey(string([chars UTF8String]), opt, opt, ctrl, shift, cmd, capsLock, numLock);
+        key = [OVModuleManager defaultManager].loaderService->makeOVKey(string(chars.UTF8String), opt, opt, ctrl, shift, cmd, capsLock, numLock);
     }
 
     return [self handleOVKey:key client:client];
@@ -381,7 +437,7 @@
             }
 
             case OVOneDimensionalCandidatePanelImpl::CandidateSelected: {
-                size_t index = panel->currentHightlightIndexInCandidateList();
+                size_t index = panel->currentHighlightIndexInCandidateList();
                 string candidate = panel->candidateList()->candidateAtIndex(index);
                 handled = _inputMethodContext->candidateSelected([OVModuleManager defaultManager].candidateService, candidate, index, _readingText, _composingText, [OVModuleManager defaultManager].loaderService);
                 candidatePanelFallThrough = true;
@@ -461,11 +517,13 @@
     NSAttributedString *emptyReading = [[NSAttributedString alloc] initWithString:@""];
     [_currentClient setMarkedText:emptyReading selectionRange:NSMakeRange(0, 0) replacementRange:NSMakeRange(NSNotFound, NSNotFound)];
     _composingText->commit();
+
     [self commitComposition:_currentClient];
+
     _composingText->clear();
     _readingText->clear();
     [OVModuleManager defaultManager].candidateService->resetAll();
-    [[[OVModuleManager defaultManager].toolTipWindowController window] orderOut:self];
+    [[OVModuleManager defaultManager].toolTipWindowController.window orderOut:self];
 
     if (!_inputMethodContext && [OVModuleManager defaultManager].activeInputMethod) {
         _inputMethodContext = [OVModuleManager defaultManager].activeInputMethod->createContext();
@@ -486,7 +544,7 @@
         return;
     }
 
-    NSDictionary *dict = [notification userInfo];
+    NSDictionary *dict = notification.userInfo;
     NSString *candidate = dict[OVOneDimensionalCandidatePanelImplSelectedCandidateStringKey];
     NSUInteger index = [dict[OVOneDimensionalCandidatePanelImplSelectedCandidateIndexKey] unsignedIntegerValue];
 
@@ -495,11 +553,11 @@
 
     bool handled;
     if (_associatedPhrasesContextInUse) {
-        handled = _associatedPhrasesContext->candidateSelected(manager.candidateService, string([candidate UTF8String]), (size_t)index, _readingText, _composingText, manager.loaderService);
+        handled = _associatedPhrasesContext->candidateSelected(manager.candidateService, string(candidate.UTF8String), (size_t)index, _readingText, _composingText, manager.loaderService);
         _associatedPhrasesContextInUse = NO;
     }
     else {
-        handled = _inputMethodContext->candidateSelected(manager.candidateService, string([candidate UTF8String]), (size_t)index, _readingText, _composingText, manager.loaderService);
+        handled = _inputMethodContext->candidateSelected(manager.candidateService, string(candidate.UTF8String), (size_t)index, _readingText, _composingText, manager.loaderService);
     }
 
     if (handled) {
@@ -533,29 +591,8 @@
         _readingText->finishUpdate();
     }
 
-    NSArray *params = @[sender, attrString, [NSValue valueWithRange:selectionRange]];
-    // If the sender is Chrome, use a 1/20 sec delay. This is likely because some
-    // internally async updates need to catch up. This is considered a hack, not a
-    // real solution. Please see these two long-standing bugs below, which also
-    // affect Google Japanese Input on Mac as well as Apple's built-in Pinyin IME:
-    // https://bugs.chromium.org/p/chromium/issues/detail?id=86460
-    // https://bugs.chromium.org/p/chromium/issues/detail?id=580808
-    if ([[sender bundleIdentifier] isEqualToString:@"com.google.Chrome"]) {
-        [self performSelector:@selector(deferredUpdateClientComposingBuffer:) withObject:params afterDelay:0.05];
-    }
-    else {
-        [self deferredUpdateClientComposingBuffer:params];
-    }
-}
-
-- (void)deferredUpdateClientComposingBuffer:(NSArray *)params
-{
-    id sender = params[0];
-    NSAttributedString *attrString = params[1];
-    NSRange selectionRange = [params[2] rangeValue];
-
     NSUInteger cursorIndex = selectionRange.location;
-    if (cursorIndex == [attrString length] && cursorIndex) {
+    if (cursorIndex == attrString.length && cursorIndex) {
         cursorIndex--;
     }
 
@@ -564,7 +601,7 @@
         NSDictionary *attr = [sender attributesForCharacterIndex:cursorIndex lineHeightRectangle:&lineHeightRect];
 
         // fall back to index 0 if no attributes are reported at cursorIndex
-        if (![attr count]) {
+        if (!attr.count) {
             [sender attributesForCharacterIndex:0 lineHeightRectangle:&lineHeightRect];
         }
     }
@@ -589,16 +626,16 @@
             fromTopLeft = NO;
         }
 
-        [[OVModuleManager defaultManager].toolTipWindowController setToolTipText:[NSString stringWithUTF8String:toolTipText.c_str()] atOrigin:toolTipOrigin fromTopLeft:fromTopLeft];
-        [[[OVModuleManager defaultManager].toolTipWindowController window] orderFront:self];
+        [[OVModuleManager defaultManager].toolTipWindowController showTooltip:@(toolTipText.c_str()) atPoint:toolTipOrigin];
+        [[OVModuleManager defaultManager].toolTipWindowController.window orderFront:self];
     }
 }
 
 - (void)changeInputMethodAction:(id)sender
 {
-    NSMenuItem *item = [sender objectForKey:kIMKCommandMenuItemName];
+    NSMenuItem *item = sender[kIMKCommandMenuItemName];
     if (item) {
-        NSString *identifier = [item representedObject];
+        NSString *identifier = item.representedObject;
         [[OVModuleManager defaultManager] selectInputMethod:identifier];
     }
 }
@@ -615,6 +652,20 @@
     OVModuleManager *manager = [OVModuleManager defaultManager];
     manager.simplifiedToTraditionalChineseFilterEnabled = !manager.simplifiedToTraditionalChineseFilterEnabled;
     manager.traditionalToSimplifiedChineseFilterEnabled = NO;
+}
+
+- (void)toggleFullWidthToHalfWidthFilterAction:(id)sender
+{
+    OVModuleManager *manager = [OVModuleManager defaultManager];
+    manager.fullWidthToHalfWidthFilterEnabled = !manager.fullWidthToHalfWidthFilterEnabled;
+    manager.halfWidthToFullWidthFilterEnabled = NO;
+}
+
+- (void)toggleHalfWidthToFullWidthFilterAction:(id)sender
+{
+    OVModuleManager *manager = [OVModuleManager defaultManager];
+    manager.halfWidthToFullWidthFilterEnabled = !manager.halfWidthToFullWidthFilterEnabled;
+    manager.fullWidthToHalfWidthFilterEnabled = NO;
 }
 
 - (void)toggleAssociatedPhrasesAroundFilterEnabledAction:(id)sender
@@ -658,4 +709,5 @@
     _associatedPhrasesContext = 0;
     _associatedPhrasesContextInUse = NO;
 }
+
 @end

@@ -15,11 +15,11 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.6.4</string>
+	<string>1.8.6</string>
 	<key>CFBundleSignature</key>
 	<string>OPVN</string>
 	<key>CFBundleVersion</key>
-	<string>3310</string>
+	<string>3516</string>
 	<key>InputMethodConnectionName</key>
 	<string>OpenVanilla_1_Connection</string>
 	<key>InputMethodServerControllerClass</key>
@@ -37,7 +37,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2004-2021 The OpenVanilla Project.</string>
+	<string>Copyright © 2004-2026 The OpenVanilla Project.</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>

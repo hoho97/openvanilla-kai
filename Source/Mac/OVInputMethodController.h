@@ -25,21 +25,8 @@
 // OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#import <Cocoa/Cocoa.h>
-#import <InputMethodKit/InputMethodKit.h>
-#import "OpenVanilla.h"
-#import "OVTextBufferImpl.h"
 
-using namespace OpenVanilla;
+@import InputMethodKit;
 
 @interface OVInputMethodController : IMKInputController
-{
-@protected
-    OVTextBufferImpl *_composingText;
-    OVTextBufferImpl *_readingText;
-    OVEventHandlingContext *_inputMethodContext;
-    OVEventHandlingContext *_associatedPhrasesContext;
-    BOOL _associatedPhrasesContextInUse;
-    id _currentClient;
-}
 @end
