@@ -1,7 +1,9 @@
 # What's the difference between the official release?
 
 
-所有聯想詞改成Windows預設的順序，方便習慣了的用家不用重新習慣聯想詞順序。
+所有聯想詞沿用本 fork 於 2020 年收錄的 Windows 順序，方便習慣了的用家不用重新習慣聯想詞順序。
+
+已合併 OpenVanilla 1.8.6（3516）。倉頡、速成字碼表及其他功能沿用上游；Windows 聯想詞表保持原樣，並以實際 CIN parser 驗證全部 44,572 個聯想項目的順序。此表並未另行對照新版 Windows 更新。
 
 因為所用的詞庫版本比較舊（從XP系統的相關字詞編輯工具上趴的)，如果有發現次序與Win10不一樣，請在Issue提出
 

@@ -18,3 +18,7 @@ jobs:
         run: xcodebuild -scheme OpenVanilla -configuration Release build
       - name: Build
         run: xcodebuild -scheme OpenVanillaInstaller -configuration Release build
+      - name: Verify Windows associated phrase order
+        run: |
+          clang++ -std=c++11 -I Packages/OpenVanilla/Sources/OpenVanilla/include Tests/associated-phrases-order.cpp -o /tmp/check-phrase-order
+          /tmp/check-phrase-order DataTables/associated-phrases.cin
